@@ -1,0 +1,417 @@
+global proc getFolderPathLocator(){}
+
+proc string getFolderPath(){ //originally global
+    string $pathString = `whatIs getFolderPathLocator`; //gives the path to the file containing the process (i.e. this one)
+    string $fullPath = `substring $pathString 25 999`;
+    string $buffer[]; //declare a "buffer" to hold the resulting list
+    int $numTok = `tokenize $fullPath "/" $buffer`; //basically: buffer = fullPath.split("/") in python
+    int $numLetters = size($fullPath);
+    int $numLettersFile = size($buffer[$numTok-1]);
+    string $scriptLocation = `substring $fullPath 1 ($numLetters-$numLettersFile)`; //remove the file name from the full path
+    return $scriptLocation;
+}
+
+
+//string $folderPath = getFolderPath();
+
+
+proc string get_vars(string $varType){
+    //script file related vars
+    string $folderPath = getFolderPath(); //gets the folder path to the mel file. Originally $getFolderPath=`getFolderPath`. Hopefully that's not necessary.
+    string $iconPath = $folderPath+"icons/";
+    string $scriptName = "faceControlProjectionTool";
+    string $sourceFile = ($folderPath + $scriptName + ".py");
+    if (!`file -q -ex $sourceFile`){
+	    error ("Something went wrong, can not find: \""+$sourceFile+"\". Please try downloading the tool again.");
+	}
+	//menu install related vars
+	string $scriptPathArray[] = stringToStringArray(`getenv "MAYA_SCRIPT_PATH"`, ";");
+    string $mayaScriptPath = $scriptPathArray[1]+"/";
+    string $menuScriptName = $scriptName+"MenuBuilder.mel";
+    string $menuScriptPath = $mayaScriptPath+$menuScriptName;
+    string $userSetupPath = $mayaScriptPath+"userSetup.mel";
+    //command related vars
+    string $withoutUI = "    fTool.initTool()\n";
+    string $withUI = "    fTool.UI()\n";
+    string $helperX = "    fTool.createMirrorHelper('X', False)\n";
+    string $helperY = "    fTool.createMirrorHelper('Y', False)\n";
+    string $helperZ = "    fTool.createMirrorHelper('Z', False)\n";
+    string $commandStart = "from sys import path\n"+
+                           "path.append('"+$folderPath+"')\n"+
+                           "import "+$scriptName+" as ft\n"+
+                           "try:\n"
+                           ;
+    string $commandBridge = "except NameError:\n"+
+                            "    fTool=ft.FaceControlTool()\n"
+                            ;
+    
+    //return vars
+    if($varType == "scriptName"){
+        return $scriptName;
+    }
+    else if($varType == "folderPath"){
+        return $folderPath;
+    }
+    else if($varType == "iconPath"){
+        return $iconPath;
+    }
+    else if($varType == "commandUI"){
+        return ($commandStart+$withUI+$commandBridge+$withUI);
+    }
+    else if($varType == "commandNoUI"){
+        return ($commandStart+$withoutUI+$commandBridge+$withoutUI);
+    }
+    else if($varType == "helperX"){
+        return ($commandStart+$helperX+$commandBridge+$helperX);
+    }
+    else if($varType == "helperY"){
+        return ($commandStart+$helperY+$commandBridge+$helperY);
+    }
+    else if($varType == "helperZ"){
+        return ($commandStart+$helperZ+$commandBridge+$helperZ);
+    }
+    else if($varType == "menuScriptName"){
+        return $menuScriptName;
+    }
+    else if($varType == "menuScriptPath"){
+        return $menuScriptPath;
+    }
+    else if($varType == "userSetupPath"){
+        return $userSetupPath;
+    }
+}
+
+proc string[] populateDropdown(string $location, string $dropdown){
+    string $items[];
+    string $modifiedItems[];
+    
+    if ($location == "shelf"){
+        global string $gShelfTopLevel;
+        $items = `tabLayout -q -childArray $gShelfTopLevel`;
+    }
+    
+    if ($location == "toolbar"){
+        global string $gMainWindow;
+        string $processItems[] = `window -q -menuArray $gMainWindow`;
+        
+        //Trim menus down to reasonable names and remove hotbox menus.
+        for ($item in $processItems){
+            if (!startsWith($item, "Hotbox")){
+                if (startsWith($item, "main")){
+                    if (endsWith($item, "Menu")){
+                        $item = substituteAllString($item, "main", "");
+                        $item = substituteAllString($item, "Menu", "");
+                        //append to $modifiedItems - you'll need to return that, so that if one of those is chosen you can revert it.
+                        //You'll use stringArrayContains() later on.
+                        $modifiedItems = stringArrayCatenate($modifiedItems, stringToStringArray($item, ""));
+                    }
+                }
+                $items = stringArrayCatenate($items, stringToStringArray($item, ""));
+            }
+        }
+    }
+    for ($item in $items) menuItem -label $item -parent $dropdown;
+    return $modifiedItems;
+}
+
+
+proc enableDisableDropdown(string $dropdown){
+    if (`optionMenu -q -en $dropdown`){
+        optionMenu -e -en 0 $dropdown;
+    }
+    else{
+        optionMenu -e -en 1 $dropdown;
+    }
+}
+
+proc UI(){
+    string $scriptName = get_vars("scriptName");
+    string $windowName = ("Install_"+$scriptName);
+    if (`window -q -ex $windowName`) deleteUI -window $windowName;
+    window -title $windowName
+           -widthHeight 200 265 $windowName;
+    columnLayout -adjustableColumn true;
+        separator -style "none" -height 5;
+        
+        text -label "Add shelf buttons" -align "left";
+        string $shelfRadio = `radioCollection`;
+        string $noShelf = `radioButton -label "No shelf buttons"`;
+        string $newShelf = `radioButton -label "Create new shelf"`;
+        string $currentShelf = `radioButton -label "Add to current shelf"`;
+        string $existingShelf = `radioButton -label "Add to existing shelf"`;
+        string $shelfDropdown = `optionMenu -en 0`;
+        populateDropdown("shelf", $shelfDropdown);
+        radioButton -e -cc ("enableDisableDropdown " + $shelfDropdown) $existingShelf;
+        radioCollection -e -sl $newShelf $shelfRadio;
+        
+        separator -style "none" -height 10;
+        
+        text -label "Add toolbar menu" -align "left";
+        string $toolbarRadio = `radioCollection`;
+        string $noToolbar = `radioButton -label "No toolbar menu"`;
+        string $newToolbar = `radioButton -label "Create new toolbar menu"`;
+        string $existingToolbar = `radioButton -label "Add to existing Toolbar menu"`;
+        string $toolDropdown = `optionMenu -en 0`;
+        //Catching modifiedMenuItems so we can put them back together later on.
+        string $modifiedMenuItems[] = populateDropdown("toolbar", $toolDropdown);
+        radioButton -e -cc ("enableDisableDropdown " + $toolDropdown) $existingToolbar;
+        radioCollection -e -sl $noToolbar $toolbarRadio;
+        
+        string $menuScriptPath = get_vars("menuScriptPath");
+	    if(`file -q -ex $menuScriptPath`){
+	        warning("Menu items for "+$scriptName+". Toolbar options disabled. To re-enable them, delete "+$menuScriptPath+" and the corresponding line in userSetup.mel");
+	        radioButton -e -en 0 $newToolbar;
+	        radioButton -e -en 0 $existingToolbar;
+	    }
+        
+        separator -style "none" -height 10;
+        
+        //Because the button's scope can't see the arrays and I can't concatenate 'em into the string, I have to decompose and then rebuild 'em within the scope of the button.
+        string $widgets[] = {$shelfRadio, $noShelf, $newShelf, $currentShelf, $existingShelf, $shelfDropdown, $toolbarRadio, $noToolbar, $newToolbar, $existingToolbar, $toolDropdown};
+        button -label "Install" -command ("string $widgets[] = {\""+stringArrayToString($widgets, "\",\"")+"\"};"+
+                                          "string $modifiedMenuItems[] = {\""+stringArrayToString($modifiedMenuItems, "\",\"")+"\"};"+
+                                          "installTool($widgets, $modifiedMenuItems);"+
+										  "deleteUI -window " + $windowName+";");
+        button -label "Close" -command ("deleteUI -window " + $windowName);
+    setParent ..;
+    showWindow $windowName;
+}
+
+proc printToFile(string $filePath, string $fileContents){
+    $fileId = `fopen $filePath "a"`;
+    fprint $fileId $fileContents;
+    //fwriteAllText($fileId, $fileContents);
+    fclose $fileId;
+}
+
+proc string createMenuFiles(string $actualToolbar, string $toolbarStatus){
+    
+    //get menu vars
+    string $scriptName = get_vars("scriptName");
+    string $commandUI = substituteAllString(get_vars("commandUI"), "\n", "\\n");
+    string $commandNoUI = substituteAllString(get_vars("commandNoUI"), "\n", "\\n");
+    string $commandHelperX = substituteAllString(get_vars("helperX"), "\n", "\\n");
+    string $commandHelperY = substituteAllString(get_vars("helperY"), "\n", "\\n");
+    string $commandHelperZ = substituteAllString(get_vars("helperZ"), "\n", "\\n");
+    
+    //get paths for files
+    string $menuScriptName = get_vars("menuScriptName");
+    string $menuScriptPath = get_vars("menuScriptPath");
+    string $userSetupPath = get_vars("userSetupPath");
+    
+    //setup variables to be populated in if statements
+    //string $actualToolbar = "";
+    string $buildMenuStringStart = "";
+    string $buildMenuStringStart = "";
+    string $buildMenuStringStart = "";
+    string $setParentMenu = "";
+    
+    //build menu creation string for new toolbars
+    if($toolbarStatus == "new"){
+        $setParentMenu = "global string $gMainWindow;\n"+
+                         "setParent $gMainWindow;\n"+
+                         "$actualToolbarShort = `menu -label "+$scriptName+" "+$scriptName+"`;\n"+
+						 "string $actualToolbar = `control -q -fpn $actualToolbarShort`;\n"+
+                         "global string $g"+$scriptName+"Menu;\n"+
+                         "$g"+$scriptName+"Menu = $actualToolbar;\n"
+                         ;
+    }
+    
+    //build menu creation string for existing toolbars
+    else if($toolbarStatus == "existing"){
+        $buildMenuStringStart = "setParent -menu "+$actualToolbar+";\n"+
+                                "menuItem -divider true -parent "+$actualToolbar+" "+$scriptName+"Div;\n"
+                                ;
+        $setParentMenu = "global string $g"+$scriptName+"Menu = \""+$actualToolbar+"\";\n";
+    }
+    
+    //build menu creation string
+    string $buildMenuString = $buildMenuStringStart+
+                              "        menuItem -label \"Activate Tool\" -command \""+$commandNoUI+"\" -sourceType \"python\" -parent $g"+$scriptName+"Menu "+$scriptName+"noUI;\n"+
+                              "        menuItem -command \""+$commandUI+"\" -sourceType \"python\" -optionBox 1 -parent $g"+$scriptName+"Menu "+$scriptName+"UI;\n"+
+                              "        menuItem -label \"Create Mirror Helper Across X\" -command \""+$commandHelperX+"\" - sourceType \"python\" -parent $g"+$scriptName+"Menu "+$scriptName+"helpX;\n"+
+                              "        menuItem -label \"Create Mirror Helper Across Y\" -command \""+$commandHelperY+"\" - sourceType \"python\" -parent $g"+$scriptName+"Menu "+$scriptName+"helpY;\n"+
+                              "        menuItem -label \"Create Mirror Helper Across Z\" -command \""+$commandHelperZ+"\" - sourceType \"python\" -parent $g"+$scriptName+"Menu "+$scriptName+"helpZ;\n"
+                              ;
+    string $removeMenuString = "        if(`menu -ex "+$scriptName+"Div`) deleteUI -mi "+$scriptName+"Div;\n"+
+                               "        if(`menu -ex "+$scriptName+"UI`) deleteUI -mi "+$scriptName+"UI;\n"+
+                               "        if(`menu -ex "+$scriptName+"noUI`) deleteUI -mi "+$scriptName+"noUI;\n"+
+                               "        if(`menu -ex "+$scriptName+"helpX`) deleteUI -mi "+$scriptName+"helpX;\n"+
+                               "        if(`menu -ex "+$scriptName+"helpY`) deleteUI -mi "+$scriptName+"helpY;\n"+
+                               "        if(`menu -ex "+$scriptName+"helpZ`) deleteUI -mi "+$scriptName+"helpZ;\n"
+                               ;
+    
+    string $menuScriptContents = "global proc gRemove"+$scriptName+"MenuItems(){\n"+
+                                 "    global int $g"+$scriptName+"ItemsExist;\n"+
+                                 "    if($g"+$scriptName+"ItemsExist){\n"+
+                                 $removeMenuString+
+                                 "    }\n"+
+                                 "}\n\n"+
+                                 "global proc string gAdd"+$scriptName+"MenuItems(){\n"+
+                                 "    \n"+
+                                 "    global int $g"+$scriptName+"ItemsExist;\n"+
+                                 "    \n"+
+                                 "    // If new menu, create new menu. Else the below line is sufficient:\n"+
+                                 "    global string $g"+$scriptName+"Menu;\n"+
+                                 "    \n"+
+                                 "    if(!$g"+$scriptName+"ItemsExist){\n"+
+                                 $buildMenuString+
+                                 "        $g"+$scriptName+"ItemsExist = 1;\n"+
+                                 "    }\n"+
+                                 "    return \"gRemove"+$scriptName+"MenuItems()\";\n"+
+                                 "}\n"+
+                                 "\n"+
+                                 "\n"+
+                                 "//variables needed for the addSafe call\n"+
+                                 "global string $g"+$scriptName+"MenuItems = \"\";\n"+
+                                 "$g"+$scriptName+"ItemsExist = 0;\n"+
+                                 "\n"+
+                                 $setParentMenu+
+                                 "addMenuItemSafe($g"+$scriptName+"Menu, \"gAdd"+$scriptName+"MenuItems\", \"g"+$scriptName+"MenuItems\");"
+                                 ;
+    printToFile($menuScriptPath, $menuScriptContents);
+    
+    string $userSetupContents = "\nsource \""+$menuScriptName+"\";";
+    printToFile($userSetupPath, $userSetupContents);
+    
+    return $menuScriptPath;
+}
+
+global proc installTool(string $widgets[], string $modifiedMenuItems[]){
+    //get menu vars
+    string $scriptName = get_vars("scriptName");
+    string $commandUI = get_vars("commandUI");
+    string $commandNoUI = get_vars("commandNoUI");
+    string $commandHelperX = get_vars("helperX");
+    string $commandHelperY = get_vars("helperY");
+    string $commandHelperZ = get_vars("helperZ");
+    
+    //unpack shelf widgets
+    string $shelfRadio = $widgets[0];
+    string $noShelf = $widgets[1];
+    string $newShelf = $widgets[2];
+    string $currentShelf = $widgets[3];
+    string $existingShelf = $widgets[4];
+    string $shelfDropdown = $widgets[5];
+    
+    //get selected shelf radio and setup shelves global var
+    string $selected = `radioCollection -q -sl $shelfRadio`;
+    string $selectedFullPath = `control -q -fpn $selected`;
+    if($selectedFullPath != $noShelf){
+        //get shelf vars
+        string $iconPath = get_vars("iconPath");
+        string $mainShelfIcon = $iconPath+"mainShelfIcon.png";
+        string $helperIconX = $iconPath+"helperIconX.png";
+        string $helperIconY = $iconPath+"helperIconY.png";
+        string $helperIconZ = $iconPath+"helperIconZ.png";
+        global string $gShelfTopLevel;
+        int $newShelfExists = 0;
+        
+        if($selectedFullPath == $newShelf){
+            if(`shelfLayout -q -ex $scriptName`){
+                warning("Shelf "+$scriptName+" already exists. Shelf buttons not created.");
+                $newShelfExists = 1;
+            }
+            else{
+                string $actualShelfShort = `addNewShelfTab $scriptName`;
+                string $actualShelf = `control -q -fpn $actualShelfShort`;
+    	        setParent $actualShelf;
+    	    }
+        }
+        else if($selectedFullPath == $currentShelf){
+            string $actualShelfShort = `tabLayout -q -selectTab $gShelfTopLevel`;
+            string $actualShelf = `control -q -fpn $actualShelfShort`;
+	        setParent $actualShelf;
+        }
+        else if($selectedFullPath == $existingShelf){
+            string $actualShelfShort = `optionMenu -q -v $shelfDropdown`;
+            string $actualShelf = `control -q -fpn $actualShelfShort`;
+            setParent $actualShelf;
+        }
+        
+        if(!$newShelfExists){
+            shelfButton
+        	-command $commandNoUI
+        	-annotation ("Open "+$scriptName)
+        	-label $scriptName
+        	-image $mainShelfIcon
+        	-image1 $mainShelfIcon
+        	-sourceType "python"
+        	-menuItem "Open UI" $commandUI
+        	-menuItemPython 0
+        	-doubleClickCommand $commandUI
+            ;
+            shelfButton
+        	-command $commandHelperX
+        	-annotation "Create mirror helper across X"
+        	-label "helperX"
+        	-align "left"
+        	-image $helperIconX
+        	-image1 $helperIconX
+        	-sourceType "python"
+            ;
+            shelfButton
+        	-command $commandHelperY
+        	-annotation "Create mirror helper across Y"
+        	-label "helperY"
+        	-align "left"
+        	-image $helperIconY
+        	-image1 $helperIconY
+        	-sourceType "python"
+            ;
+            shelfButton
+        	-command $commandHelperZ
+        	-annotation "Create mirror helper across Z"
+        	-label "helperZ"
+        	-align "left"
+        	-image $helperIconZ
+        	-image1 $helperIconZ
+        	-sourceType "python"
+            ;
+            
+            global string $gShelfTopLevel;
+            saveAllShelves $gShelfTopLevel;
+            
+            print ("\n// "+$scriptName+" has been added to the shelf.\n");
+        }
+    }
+    
+    
+    //unpack toolbar widgets
+    string $toolbarRadio = $widgets[6];
+    string $noToolbar = $widgets[7];
+    string $newToolbar = $widgets[8];
+    string $existingToolbar = $widgets[9];
+    string $toolbarDropdown = $widgets[10];
+	
+	string $menuFile = get_vars("menuScriptPath");
+    
+    string $selectedShort = `radioCollection -q -sl $toolbarRadio`;
+    string $selected = `control -q -fpn $selectedShort`;
+    if($selected != $noToolbar){
+        
+        //string $menuFile = "";
+        
+        if($selected == $newToolbar){
+            createMenuFiles("none", "new");
+        }
+        else if($selected == $existingToolbar){
+            $actualToolbar = `optionMenu -q -v $toolbarDropdown`;
+            //put the menu name back together if necessary
+            if(stringArrayContains($actualToolbar, $modifiedMenuItems)){
+                $actualToolbar = "main"+$actualToolbar+"Menu";
+            }
+            createMenuFiles($actualToolbar, "existing");
+            
+        }
+        if(!`file -q -ex $menuFile`){
+	        error ("Can not find: \""+$menuFile+"\". Please try restarting Maya to load tool menus.");
+	    }
+	    else{
+            eval("source \""+$menuFile+"\"");
+            print ("\n// "+$scriptName+" has been added to the menu.\n");
+        }
+    }
+}
+
+UI();
